@@ -155,6 +155,102 @@ describe('runBd', () => {
   });
 });
 
+describe('runBd queue bypass for SQLite workspaces', () => {
+  /**
+   * Build a controllable fake child process whose `close` event is held
+   * open until the returned `finish()` is invoked.
+   */
+  function makeHeldProc() {
+    const cp = /** @type {any} */ (new EventEmitter());
+    cp.stdout = new PassThrough();
+    cp.stderr = new PassThrough();
+    /** @type {() => void} */
+    const finish = () => {
+      cp.stdout.end();
+      cp.stderr.end();
+      cp.emit('close', 0);
+    };
+    return { cp, finish };
+  }
+
+  test('SQLite workspace: two invocations run concurrently (no global mutex)', async () => {
+    const root = make_temp_dir();
+    fs.mkdirSync(path.join(root, '.beads'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.beads', 'ui.db'), '');
+
+    const a = makeHeldProc();
+    const b = makeHeldProc();
+    mockedSpawn.mockReturnValueOnce(a.cp).mockReturnValueOnce(b.cp);
+
+    const p1 = runBd(['list'], { cwd: root, env: {} });
+    const p2 = runBd(['list'], { cwd: root, env: {} });
+    // Both spawns must have been issued before either finishes.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockedSpawn).toHaveBeenCalledTimes(2);
+
+    a.finish();
+    b.finish();
+    await Promise.all([p1, p2]);
+  });
+
+  test('Non-SQLite (Dolt-style) workspace: invocations are serialized', async () => {
+    // No `.beads/*.db` under a temp cwd → resolveDbPath falls back to
+    // `~/.beads/default.db`, which usually does not exist. shouldBypassQueue
+    // returns false in that case, restoring the legacy serialized behavior.
+    const root = make_temp_dir();
+
+    const a = makeHeldProc();
+    const b = makeHeldProc();
+    mockedSpawn.mockReturnValueOnce(a.cp).mockReturnValueOnce(b.cp);
+
+    const p1 = runBd(['list'], { cwd: root, env: {} });
+    const p2 = runBd(['list'], { cwd: root, env: {} });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockedSpawn).toHaveBeenCalledTimes(1);
+
+    a.finish();
+    await p1;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockedSpawn).toHaveBeenCalledTimes(2);
+    b.finish();
+    await p2;
+  });
+
+  test('BDUI_BD_SERIALIZE=1 forces serialization even on SQLite', async () => {
+    const prev = process.env.BDUI_BD_SERIALIZE;
+    process.env.BDUI_BD_SERIALIZE = '1';
+    try {
+      const root = make_temp_dir();
+      fs.mkdirSync(path.join(root, '.beads'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.beads', 'ui.db'), '');
+
+      const a = makeHeldProc();
+      const b = makeHeldProc();
+      mockedSpawn.mockReturnValueOnce(a.cp).mockReturnValueOnce(b.cp);
+
+      const p1 = runBd(['list'], { cwd: root, env: {} });
+      const p2 = runBd(['list'], { cwd: root, env: {} });
+
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockedSpawn).toHaveBeenCalledTimes(1);
+
+      a.finish();
+      await p1;
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockedSpawn).toHaveBeenCalledTimes(2);
+      b.finish();
+      await p2;
+    } finally {
+      if (prev === undefined) {
+        delete process.env.BDUI_BD_SERIALIZE;
+      } else {
+        process.env.BDUI_BD_SERIALIZE = prev;
+      }
+    }
+  });
+});
+
 describe('runBdJson', () => {
   test('parses valid JSON output', async () => {
     const json = JSON.stringify([{ id: 'UI-1' }]);

@@ -7,6 +7,49 @@ const log = debug('bd');
 let bd_run_queue = Promise.resolve();
 
 /**
+ * Whether a given workspace resolves to a SQLite database file. SQLite
+ * supports concurrent readers, so we can spawn `bd` processes in parallel
+ * against it. The global serialization queue (`bd_run_queue`) only exists
+ * because Dolt embedded mode crashes under concurrent processes; for SQLite
+ * the queue is pure latency.
+ *
+ * @param {{ cwd?: string, env?: Record<string, string | undefined> }} [options]
+ */
+function isSqliteWorkspace(options = {}) {
+  const resolved = resolveDbPath({
+    cwd: options.cwd || process.cwd(),
+    env: options.env || process.env
+  });
+  // The path must exist and look like a SQLite file. The `home-default`
+  // fallback also names a `.db` file but may not exist; skip queueing only
+  // when we have a real, existing SQLite file to talk to.
+  if (!resolved.exists) {
+    return false;
+  }
+  return resolved.path.toLowerCase().endsWith('.db');
+}
+
+/**
+ * Whether to bypass the global `bd` mutex for this invocation.
+ * The default mutex protects Dolt's embedded mode from concurrent process
+ * crashes; SQLite has no such constraint and benefits significantly from
+ * parallel reads (e.g., per-tab subscription refresh fan-out).
+ *
+ * Set `BDUI_BD_SERIALIZE=1` to force-queue every invocation regardless.
+ *
+ * @param {{ cwd?: string, env?: Record<string, string | undefined> }} [options]
+ */
+function shouldBypassQueue(options = {}) {
+  const force_serialize = String(
+    process.env.BDUI_BD_SERIALIZE || ''
+  ).toLowerCase();
+  if (force_serialize === '1' || force_serialize === 'true') {
+    return false;
+  }
+  return isSqliteWorkspace(options);
+}
+
+/**
  * Get the git user name from git config.
  *
  * @param {{ cwd?: string }} [options]
@@ -56,11 +99,18 @@ export function getBdBin() {
  * Run the `bd` CLI with provided arguments.
  * Shell is not used to avoid injection; args must be pre-split.
  *
+ * For SQLite workspaces this runs without queueing — multiple readers are
+ * safe. The global mutex exists only to protect Dolt's embedded mode from
+ * concurrent process crashes.
+ *
  * @param {string[]} args - Arguments to pass (e.g., ["list", "--json"]).
  * @param {{ cwd?: string, env?: Record<string, string | undefined>, timeout_ms?: number }} [options]
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
 export function runBd(args, options = {}) {
+  if (shouldBypassQueue(options)) {
+    return runBdUnlocked(args, options);
+  }
   return withBdRunQueue(async () => runBdUnlocked(args, options));
 }
 
