@@ -7,6 +7,14 @@ const log = debug('bd');
 let bd_run_queue = Promise.resolve();
 
 /**
+ * Count of write `bd` invocations that are queued or currently running.
+ * While > 0, even SQLite reads route through the queue, so a watcher-driven
+ * read fan-out cannot fire against a still-active writer (which would hit
+ * SQLITE_BUSY and produce the "Add dependency hangs" UI symptom).
+ */
+let pending_writes = 0;
+
+/**
  * Whether a given workspace resolves to a SQLite database file. SQLite
  * supports concurrent readers, so we can spawn `bd` processes in parallel
  * against it. The global serialization queue (`bd_run_queue`) only exists
@@ -30,20 +38,82 @@ function isSqliteWorkspace(options = {}) {
 }
 
 /**
+ * Subcommands that write to the database. Writers must always go through the
+ * global queue regardless of backend, because:
+ *  - SQLite: a writer holds the database lock; concurrent readers spawned by
+ *    the watcher's refresh fan-out hit `SQLITE_BUSY` and either retry-loop
+ *    (multi-second hangs) or fail. Symptom: the UI's "Add dependency" sits
+ *    in a loading state because the writer's followup `bd show` deadlocks
+ *    against the parallel readers the same write triggered.
+ *  - Dolt: embedded mode crashes under any concurrent processes — the
+ *    original reason this queue exists.
+ *
+ * Read-only subcommands on SQLite are safe to run concurrently and benefit
+ * from skipping the queue.
+ */
+const WRITE_SUBCOMMANDS = new Set([
+  'update',
+  'create',
+  'dep',
+  'label',
+  'comment',
+  'delete',
+  'close',
+  'reopen',
+  'edit',
+  'set',
+  'rename',
+  'rename-prefix',
+  'import',
+  'init',
+  'compact',
+  'restore'
+]);
+
+/**
+ * Inspect bd args and decide whether the invocation writes to the database.
+ * The first non-flag positional argument is the subcommand.
+ *
+ * @param {string[]} args
+ */
+function isWriteCommand(args) {
+  for (const a of args) {
+    if (typeof a !== 'string') {
+      continue;
+    }
+    if (a.startsWith('-')) {
+      // Skip global flags like `--sandbox`, `--db <path>`, `--json`, etc.
+      continue;
+    }
+    return WRITE_SUBCOMMANDS.has(a);
+  }
+  return false;
+}
+
+/**
  * Whether to bypass the global `bd` mutex for this invocation.
- * The default mutex protects Dolt's embedded mode from concurrent process
- * crashes; SQLite has no such constraint and benefits significantly from
- * parallel reads (e.g., per-tab subscription refresh fan-out).
+ * Writers always queue (see `WRITE_SUBCOMMANDS`). Readers bypass when the
+ * workspace is SQLite, where multiple readers are safe and parallel cold
+ * starts give a meaningful refresh-fan-out speedup.
  *
  * Set `BDUI_BD_SERIALIZE=1` to force-queue every invocation regardless.
  *
+ * @param {string[]} args
  * @param {{ cwd?: string, env?: Record<string, string | undefined> }} [options]
  */
-function shouldBypassQueue(options = {}) {
+function shouldBypassQueue(args, options = {}) {
   const force_serialize = String(
     process.env.BDUI_BD_SERIALIZE || ''
   ).toLowerCase();
   if (force_serialize === '1' || force_serialize === 'true') {
+    return false;
+  }
+  if (isWriteCommand(args)) {
+    return false;
+  }
+  // Hold reads while any writer is queued/active so we don't spawn a parallel
+  // reader against an in-flight SQLite writer.
+  if (pending_writes > 0) {
     return false;
   }
   return isSqliteWorkspace(options);
@@ -108,10 +178,20 @@ export function getBdBin() {
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
 export function runBd(args, options = {}) {
-  if (shouldBypassQueue(options)) {
+  const is_write = isWriteCommand(args);
+  if (shouldBypassQueue(args, options)) {
     return runBdUnlocked(args, options);
   }
-  return withBdRunQueue(async () => runBdUnlocked(args, options));
+  if (is_write) {
+    pending_writes++;
+  }
+  const settled = withBdRunQueue(async () => runBdUnlocked(args, options));
+  if (is_write) {
+    settled.finally(() => {
+      pending_writes--;
+    });
+  }
+  return settled;
 }
 
 /**

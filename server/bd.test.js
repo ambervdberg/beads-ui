@@ -173,7 +173,7 @@ describe('runBd queue bypass for SQLite workspaces', () => {
     return { cp, finish };
   }
 
-  test('SQLite workspace: two invocations run concurrently (no global mutex)', async () => {
+  test('SQLite workspace: two reads run concurrently (no global mutex)', async () => {
     const root = make_temp_dir();
     fs.mkdirSync(path.join(root, '.beads'), { recursive: true });
     fs.writeFileSync(path.join(root, '.beads', 'ui.db'), '');
@@ -191,6 +191,59 @@ describe('runBd queue bypass for SQLite workspaces', () => {
     a.finish();
     b.finish();
     await Promise.all([p1, p2]);
+  });
+
+  test('SQLite workspace: writes are still serialized (avoids SQLITE_BUSY)', async () => {
+    // SQLite writers hold an exclusive lock; running them in parallel with
+    // other bd processes (writers OR readers) triggers SQLITE_BUSY storms
+    // that deadlock the UI ("Add dependency" gets stuck loading).
+    const root = make_temp_dir();
+    fs.mkdirSync(path.join(root, '.beads'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.beads', 'ui.db'), '');
+
+    const a = makeHeldProc();
+    const b = makeHeldProc();
+    mockedSpawn.mockReturnValueOnce(a.cp).mockReturnValueOnce(b.cp);
+
+    const p1 = runBd(['dep', 'add', 'X-1', 'X-2'], { cwd: root, env: {} });
+    const p2 = runBd(['update', 'X-1', '--status', 'closed'], {
+      cwd: root,
+      env: {}
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockedSpawn).toHaveBeenCalledTimes(1);
+
+    a.finish();
+    await p1;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockedSpawn).toHaveBeenCalledTimes(2);
+    b.finish();
+    await p2;
+  });
+
+  test('SQLite workspace: a write blocks a concurrent read', async () => {
+    const root = make_temp_dir();
+    fs.mkdirSync(path.join(root, '.beads'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.beads', 'ui.db'), '');
+
+    const writer = makeHeldProc();
+    const reader = makeHeldProc();
+    mockedSpawn.mockReturnValueOnce(writer.cp).mockReturnValueOnce(reader.cp);
+
+    // Issue write first; reader started after must wait until writer finishes.
+    const pw = runBd(['dep', 'add', 'X-1', 'X-2'], { cwd: root, env: {} });
+    const pr = runBd(['list'], { cwd: root, env: {} });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockedSpawn).toHaveBeenCalledTimes(1);
+
+    writer.finish();
+    await pw;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockedSpawn).toHaveBeenCalledTimes(2);
+    reader.finish();
+    await pr;
   });
 
   test('Non-SQLite (Dolt-style) workspace: invocations are serialized', async () => {
