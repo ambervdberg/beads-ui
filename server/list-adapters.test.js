@@ -22,6 +22,19 @@ describe('list adapters for subscription types', () => {
     expect(args).toEqual(['epic', 'status', '--json']);
   });
 
+  test('mapSubscriptionToBdArgs returns args for features', () => {
+    const args = mapSubscriptionToBdArgs({ type: 'features' });
+    expect(args).toEqual([
+      'list',
+      '--json',
+      '--tree=false',
+      '--type',
+      'feature',
+      '--limit',
+      '1000'
+    ]);
+  });
+
   test('mapSubscriptionToBdArgs returns args for blocked-issues', () => {
     const args = mapSubscriptionToBdArgs({ type: 'blocked-issues' });
     // We choose dedicated subcommand mapping for blocked

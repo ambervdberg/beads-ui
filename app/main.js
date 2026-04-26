@@ -15,6 +15,7 @@ import { createBoardView } from './views/board.js';
 import { createDetailView } from './views/detail.js';
 import { createEpicsView } from './views/epics.js';
 import { createFatalErrorDialog } from './views/fatal-error-dialog.js';
+import { createFeaturesView } from './views/features.js';
 import { createIssueDialog } from './views/issue-dialog.js';
 import { createListView } from './views/list.js';
 import { createTopNav } from './views/nav.js';
@@ -37,6 +38,7 @@ export function bootstrap(root_element) {
       <aside id="list-panel" class="panel"></aside>
     </section>
     <section id="epics-root" class="route epics" hidden></section>
+    <section id="features-root" class="route features" hidden></section>
     <section id="board-root" class="route board" hidden></section>
     <section id="detail-panel" class="route detail" hidden></section>
   `;
@@ -49,13 +51,22 @@ export function bootstrap(root_element) {
   /** @type {HTMLElement|null} */
   const epics_root = document.getElementById('epics-root');
   /** @type {HTMLElement|null} */
+  const features_root = document.getElementById('features-root');
+  /** @type {HTMLElement|null} */
   const board_root = document.getElementById('board-root');
 
   /** @type {HTMLElement|null} */
   const list_mount = document.getElementById('list-panel');
   /** @type {HTMLElement|null} */
   const detail_mount = document.getElementById('detail-panel');
-  if (list_mount && issues_root && epics_root && board_root && detail_mount) {
+  if (
+    list_mount &&
+    issues_root &&
+    epics_root &&
+    features_root &&
+    board_root &&
+    detail_mount
+  ) {
     /** @type {HTMLElement|null} */
     const header_loading = document.getElementById('header-loading');
     const activity = createActivityIndicator(header_loading);
@@ -165,6 +176,10 @@ export function bootstrap(root_element) {
         void unsub_epics_tab().catch(() => {});
         unsub_epics_tab = null;
       }
+      if (unsub_features_tab) {
+        void unsub_features_tab().catch(() => {});
+        unsub_features_tab = null;
+      }
       if (unsub_board_ready) {
         void unsub_board_ready().catch(() => {});
         unsub_board_ready = null;
@@ -185,6 +200,7 @@ export function bootstrap(root_element) {
       const storeIds = [
         'tab:issues',
         'tab:epics',
+        'tab:features',
         'tab:board:ready',
         'tab:board:in-progress',
         'tab:board:closed',
@@ -382,13 +398,14 @@ export function bootstrap(root_element) {
       log('filters parse error: %o', err);
     }
     // Load last-view from storage
-    /** @type {'issues'|'epics'|'board'} */
+    /** @type {'issues'|'epics'|'features'|'board'} */
     let last_view = 'issues';
     try {
       const raw_view = window.localStorage.getItem('beads-ui.view');
       if (
         raw_view === 'issues' ||
         raw_view === 'epics' ||
+        raw_view === 'features' ||
         raw_view === 'board'
       ) {
         last_view = raw_view;
@@ -519,7 +536,7 @@ export function bootstrap(root_element) {
       const s = store.getState();
       store.setState({ selected_id: null });
       try {
-        /** @type {'issues'|'epics'|'board'} */
+        /** @type {'issues'|'epics'|'features'|'board'} */
         const v = s.view || 'issues';
         router.gotoView(v);
       } catch {
@@ -632,6 +649,13 @@ export function bootstrap(root_element) {
       subscriptions,
       sub_issue_stores
     );
+    const features_view = createFeaturesView(
+      features_root,
+      data,
+      (id) => router.gotoIssue(id),
+      subscriptions,
+      sub_issue_stores
+    );
     const board_view = createBoardView(
       board_root,
       data,
@@ -650,6 +674,8 @@ export function bootstrap(root_element) {
     let unsub_issues_tab = null;
     /** @type {null | (() => Promise<void>)} */
     let unsub_epics_tab = null;
+    /** @type {null | (() => Promise<void>)} */
+    let unsub_features_tab = null;
     /** @type {null | (() => Promise<void>)} */
     let unsub_board_ready = null;
     /** @type {null | (() => Promise<void>)} */
@@ -697,7 +723,7 @@ export function bootstrap(root_element) {
     /**
      * Ensure only the active tab has subscriptions; clean up previous.
      *
-     * @param {{ view: 'issues'|'epics'|'board', filters: any }} s
+     * @param {{ view: 'issues'|'epics'|'features'|'board', filters: any }} s
      */
     function ensureTabSubscriptions(s) {
       // Issues tab
@@ -773,6 +799,40 @@ export function bootstrap(root_element) {
           sub_issue_stores.unregister('tab:epics');
         } catch (err) {
           log('unregister epics store failed: %o', err);
+        }
+      }
+
+      // Features tab — same shape as Epics, but subscribes to plain feature
+      // issues (no server-side counters). Children are streamed via the
+      // detail subscription each row creates on expand.
+      if (s.view === 'features') {
+        try {
+          sub_issue_stores.register('tab:features', { type: 'features' });
+        } catch (err) {
+          log('register features store failed: %o', err);
+        }
+        if (!unsub_features_tab && !pending_subscriptions.has('tab:features')) {
+          pending_subscriptions.add('tab:features');
+          void subscriptions
+            .subscribeList('tab:features', { type: 'features' })
+            .then((unsub) => {
+              unsub_features_tab = unsub;
+            })
+            .catch((err) => {
+              log('subscribe features failed: %o', err);
+              showFatalFromError(err, 'features');
+            })
+            .finally(() => {
+              pending_subscriptions.delete('tab:features');
+            });
+        }
+      } else if (unsub_features_tab) {
+        void unsub_features_tab().catch(() => {});
+        unsub_features_tab = null;
+        try {
+          sub_issue_stores.unregister('tab:features');
+        } catch (err) {
+          log('unregister features store failed: %o', err);
         }
       }
 
@@ -920,13 +980,20 @@ export function bootstrap(root_element) {
     /**
      * Manage route visibility and list subscriptions per view.
      *
-     * @param {{ selected_id: string | null, view: 'issues'|'epics'|'board', filters: any }} s
+     * @param {{ selected_id: string | null, view: 'issues'|'epics'|'features'|'board', filters: any }} s
      */
     const onRouteChange = (s) => {
-      if (issues_root && epics_root && board_root && detail_mount) {
+      if (
+        issues_root &&
+        epics_root &&
+        features_root &&
+        board_root &&
+        detail_mount
+      ) {
         // Underlying route visibility is controlled only by selected view
         issues_root.hidden = s.view !== 'issues';
         epics_root.hidden = s.view !== 'epics';
+        features_root.hidden = s.view !== 'features';
         board_root.hidden = s.view !== 'board';
         // detail_mount visibility handled in subscription above
       }
@@ -935,6 +1002,9 @@ export function bootstrap(root_element) {
       ensureTabSubscriptions(s);
       if (!s.selected_id && s.view === 'epics') {
         void epics_view.load();
+      }
+      if (!s.selected_id && s.view === 'features') {
+        void features_view.load();
       }
       if (!s.selected_id && s.view === 'board') {
         void board_view.load();

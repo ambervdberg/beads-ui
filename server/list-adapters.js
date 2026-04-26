@@ -19,6 +19,19 @@ export function mapSubscriptionToBdArgs(spec) {
     case 'epics': {
       return ['epic', 'status', '--json'];
     }
+    case 'features': {
+      // Plain feature list. Children are obtained on expand via `issue-detail`,
+      // so no server-side counters/dependents are pre-aggregated here.
+      return [
+        'list',
+        '--json',
+        '--tree=false',
+        '--type',
+        'feature',
+        '--limit',
+        '1000'
+      ];
+    }
     case 'blocked-issues': {
       return ['blocked', '--json'];
     }
