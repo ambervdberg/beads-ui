@@ -35,10 +35,12 @@ describe('views/nav', () => {
     );
     const links = mount.querySelectorAll('a.tab');
     expect(links.length).toBe(4);
+    expect(links[1].textContent?.trim()).toBe('Features');
+    expect(links[2].textContent?.trim()).toBe('Epics');
     links[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(router.gotoView).toHaveBeenCalledWith('epics');
-    links[2].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(router.gotoView).toHaveBeenCalledWith('features');
+    links[2].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(router.gotoView).toHaveBeenCalledWith('epics');
     links[3].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(router.gotoView).toHaveBeenCalledWith('board');
   });

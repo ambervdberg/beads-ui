@@ -8,6 +8,43 @@ import { createIssueRowRenderer } from './issue-row.js';
  */
 
 /**
+ * Count total and closed direct children for a parent issue.
+ *
+ * @param {IssueLite[]} children
+ * @returns {{ total_children: number, closed_children: number }}
+ */
+function countChildrenProgress(children) {
+  let closed_children = 0;
+  for (const child of children) {
+    // Only direct children count toward this parent progress bar.
+    if (String(child.status || '') === 'closed') {
+      closed_children++;
+    }
+  }
+  return {
+    total_children: children.length,
+    closed_children
+  };
+}
+
+/**
+ * Get progress counters, preferring subscribed children when they are loaded.
+ *
+ * @param {{ total_children: number, closed_children: number }} group
+ * @param {IssueLite[]} children
+ * @returns {{ total_children: number, closed_children: number }}
+ */
+function getProgressCounts(group, children) {
+  if (children.length > 0) {
+    return countChildrenProgress(children);
+  }
+  return {
+    total_children: Number(group.total_children || 0),
+    closed_children: Number(group.closed_children || 0)
+  };
+}
+
+/**
  * Generalized "parent → direct children" expandable list view.
  *
  * Used by the Epics and Features tabs. The view subscribes to a tab list
@@ -150,6 +187,9 @@ export function createParentGroupsView(
     const id = String(parent.id || '');
     const is_open = expanded_parents.has(id);
     const list = selectors ? selectors.selectChildren(id) : [];
+    const progress = getProgressCounts(g, list);
+    const progress_class =
+      parent_kind === 'feature' ? 'feature-progress' : 'epic-progress';
     const is_loading = loading_parents.has(id);
     const header = html`
       <div
@@ -165,15 +205,15 @@ export function createParentGroupsView(
         >
         ${show_progress
           ? html`<span
-              class="epic-progress"
+              class=${progress_class}
               style="margin-left:auto; display:flex; align-items:center; gap:8px;"
             >
               <progress
-                value=${Number(g.closed_children || 0)}
-                max=${Math.max(1, Number(g.total_children || 0))}
+                value=${progress.closed_children}
+                max=${Math.max(1, progress.total_children)}
               ></progress>
               <span class="muted mono"
-                >${g.closed_children}/${g.total_children}</span
+                >${progress.closed_children}/${progress.total_children}</span
               >
             </span>`
           : null}

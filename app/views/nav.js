@@ -37,16 +37,16 @@ export function createTopNav(mount_element, store, router) {
           >Issues</a
         >
         <a
-          href="#/epics"
-          class="tab ${active === 'epics' ? 'active' : ''}"
-          @click=${onClick('epics')}
-          >Epics</a
-        >
-        <a
           href="#/features"
           class="tab ${active === 'features' ? 'active' : ''}"
           @click=${onClick('features')}
           >Features</a
+        >
+        <a
+          href="#/epics"
+          class="tab ${active === 'epics' ? 'active' : ''}"
+          @click=${onClick('epics')}
+          >Epics</a
         >
         <a
           href="#/board"

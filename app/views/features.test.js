@@ -108,6 +108,9 @@ describe('views/features', () => {
 
     const childRows = mount.querySelectorAll('tr.epic-row');
     expect(childRows.length).toBeGreaterThanOrEqual(1);
+    const progress = groups[0].querySelector('.feature-progress');
+    expect(progress?.textContent?.trim()).toBe('0/1');
+    expect(groups[0].querySelector('.epic-progress')).toBeNull();
     // Clicking the row body navigates to the child issue.
     childRows[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(navCalls[0]).toBe('T-1');
