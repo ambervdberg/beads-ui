@@ -18,7 +18,8 @@ import { createTypeBadge } from '../utils/type-badge.js';
  *   onUpdate: (id: string, patch: { title?: string, assignee?: string, status?: 'open'|'in_progress'|'closed', priority?: number }) => Promise<void>,
  *   requestRender: () => void,
  *   getSelectedId?: () => string | null,
- *   row_class?: string
+ *   row_class?: string,
+ *   prefixCell?: (it: IssueRowData) => import('lit-html').TemplateResult<1> | null,
  * }} options
  * @returns {(it: IssueRowData) => import('lit-html').TemplateResult<1>}
  */
@@ -28,6 +29,7 @@ export function createIssueRowRenderer(options) {
   const request_render = options.requestRender;
   const get_selected_id = options.getSelectedId || (() => null);
   const row_class = options.row_class || 'issue-row';
+  const prefix_cell = options.prefixCell || null;
 
   /** @type {Set<string>} */
   const editing = new Set();
@@ -147,6 +149,7 @@ export function createIssueRowRenderer(options) {
       data-issue-id=${it.id}
       @click=${makeRowClick(it.id)}
     >
+      ${prefix_cell ? prefix_cell(it) : ''}
       <td role="gridcell" class="mono">${createIssueIdRenderer(it.id)}</td>
       <td role="gridcell">${createTypeBadge(it.issue_type)}</td>
       <td role="gridcell">${editableText(it.id, 'title', it.title || '')}</td>
