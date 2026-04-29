@@ -59,27 +59,32 @@ export function createListSelectors(issue_stores = undefined) {
   }
 
   /**
-   * Get children for an epic subscribed as client id `epic:${id}`.
+   * Get direct children (parent-child dependents) for any parent issue whose
+   * detail is subscribed as `detail:<id>`. Used for both Epics and Features
+   * tabs and for nested expansion of arbitrary descendants.
    * Sorted as Issues List (priority asc → created asc).
    *
-   * @param {string} epic_id
+   * @param {string} parent_id
    * @returns {IssueLite[]}
    */
-  function selectEpicChildren(epic_id) {
+  function selectChildren(parent_id) {
     if (!issue_stores || typeof issue_stores.snapshotFor !== 'function') {
       return [];
     }
-    // Epic detail subscription uses client id `detail:<id>` and contains the
-    // epic entity with a `dependents` array. Render children from that list.
     const arr = /** @type {any[]} */ (
-      issue_stores.snapshotFor(`detail:${epic_id}`) || []
+      issue_stores.snapshotFor(`detail:${parent_id}`) || []
     );
-    const epic = arr.find((it) => String(it?.id || '') === String(epic_id));
-    const dependents = Array.isArray(epic?.dependents) ? epic.dependents : [];
+    const parent = arr.find((it) => String(it?.id || '') === String(parent_id));
+    const dependents = Array.isArray(parent?.dependents)
+      ? parent.dependents
+      : [];
     return /** @type {IssueLite[]} */ (
       dependents.slice().sort(cmpPriorityThenCreated)
     );
   }
+
+  // Backwards-compatible alias for callers that used the epics-specific name.
+  const selectEpicChildren = selectChildren;
 
   /**
    * Subscribe for re-render; triggers once per issues envelope.
@@ -97,6 +102,7 @@ export function createListSelectors(issue_stores = undefined) {
   return {
     selectIssuesFor,
     selectBoardColumn,
+    selectChildren,
     selectEpicChildren,
     subscribe
   };

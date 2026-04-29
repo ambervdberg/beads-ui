@@ -1203,6 +1203,40 @@ input.inline-edit:focus {
   background: color-mix(in srgb, var(--control-bg) 55%, transparent);
 }
 
+/* Row expander chevron used by Epics/Features parent-children tables. */
+.row-expander {
+  text-align: center;
+  padding: 0 !important;
+}
+.row-expander__btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+  border-radius: 4px;
+}
+.row-expander__btn:hover {
+  background: color-mix(in srgb, var(--control-bg) 70%, transparent);
+  color: var(--text);
+}
+.row-expander__btn.is-open {
+  color: var(--text);
+}
+
+/* Nested children row inside a parent-children table. */
+.epic-row--nested > td.nested-cell {
+  padding: 0 0 6px 28px;
+  background: color-mix(in srgb, var(--panel-bg) 60%, transparent);
+}
+.nested-children {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+
 /* Board view styles */
 .board-root {
   display: grid;
