@@ -31,6 +31,7 @@
     "version": "changes --commits --footer",
     "postversion": "git push --follow-tags && npm publish",
     "prepack": "npm run build",
+    "prepare": "npm run build",
     "postpack": "rm app/main.bundle.js app/main.bundle.js.map"
   },
   "dependencies": {
